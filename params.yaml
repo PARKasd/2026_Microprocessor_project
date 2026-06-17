@@ -1,0 +1,17 @@
+
+serial:
+  port: /dev/tty.usbmodem11201
+  baud: 115200               # Arduino Uno
+
+geometry:
+  D: 34.0                   # LiDAR - 회전축 수평거리 [cm]
+  H: 10.0                   # LiDAR 높이 [cm]
+
+filter:
+  dist_min: 5.0             # [cm]
+  dist_max: 80.0            # [cm]
+  strength_min: 20.0        # TFmini 신호세기 하한
+
+autostop:
+  enabled: true
+  target: 26                # 26바퀴
