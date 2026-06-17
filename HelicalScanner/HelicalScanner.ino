@@ -1,25 +1,3 @@
-/* ============================================================
- * HelicalScanner.ino
- * TFmini-S 단일 점 LiDAR 연속 나선형(helical) 3D 스캐너 펌웨어
- *
- *   - DC 모터(JGB37-520 + 엔코더) : 턴테이블 등속 회전  (속도 PID)
- *   - 28BYJ-48 스텝모터           : TFmini tilt 0° <-> 45° 연속 왕복 (pan 종속, AccelStepper)
- *                                    tilt 위상 = (엔코더 바퀴수 × 20/23) -> 23바퀴마다 정확히 반복
- *   - TFmini 프레임이 들어오는 "그 순간"의 pan/tilt 를 함께 캡처 -> CSV 출력
- *
- *   ── 인터럽트 / 레지스터 사용 ──────────────────────────────
- *   - 엔코더 A/B 를 외부 인터럽트 INT0(D2) / INT1(D3) 로 처리
- *   - EICRA / EIMSK 직접 설정, ISR 안에서 PIND 직접 read
- *   - 상태천이 LUT 로 4x 쿼드러처 디코딩 (분해능 4배)
- *   - DC PWM 은 Timer0(D6, analogWrite), tilt 는 AccelStepper.run() 으로 병렬 동작
- *
- *   PC 출력 포맷 : tilt_deg,enc_count,distance_cm,strength  (pan 각도는 PC 에서 계산)
- *   PC 명령      : s=start, h=halt, z=zero, p=status
- *
- *   필요 라이브러리 : AccelStepper, (SoftwareSerial 은 기본 포함)
- *   TFmini UART  : 19200 (별도 스케치로 영구 설정 완료. SoftwareSerial 무손실 ~100/s)
- * ============================================================ */
-
 #include <SoftwareSerial.h>
 #include <AccelStepper.h>
 #include <math.h>           // floorf
@@ -40,7 +18,6 @@
 #define STP_IN4   13
 
 SoftwareSerial tfSerial(TFMINI_RX, TFMINI_TX);
-// 28BYJ-48 은 IN1,IN3,IN2,IN4 순서여야 제자리 떨림 없이 회전함
 AccelStepper tiltStepper(AccelStepper::HALF4WIRE, STP_IN1, STP_IN3, STP_IN2, STP_IN4);
 
 // ──────────────────── 턴테이블 (속도 PID) ───────────────────
