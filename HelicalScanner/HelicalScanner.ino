@@ -1,6 +1,6 @@
 #include <SoftwareSerial.h>
 #include <AccelStepper.h>
-#include <math.h>          
+#include <math.h>
 
 //핀 배치
 #define ENC_A     2     // INT0  (엔코더 A)
@@ -40,25 +40,22 @@ const float TILT_CYCLES_PER_REV = 20.0f / 23.0f;        // pan 1회전당 tilt �
 const float TILT_MAX_SPEED_SPS  = 700.0f;
 const float TILT_ACCEL_SPS2     = 2500.0f;
 
-// ─────────────────── 엔코더 (인터럽트 + 레지스터) ───────────
-static const int8_t PRECALC[16] = {  0, -1,  1,  0,
-                                  1,  0,  0, -1,
-                                 -1,  0,  0,  1,
-                                  0,  1, -1,  0 };
-volatile long    encCount = 0;
+//엔코더
+static const int8_t PRECALC[16] = {  0, -1,  1,  0, 1,  0,  0, -1, -1,  0,  0,  1, 0,  1, -1,  0 };
+volatile long    encoder_count = 0;
 volatile uint8_t encState = 0;
-static inline void encUpdate() {
-  uint8_t p = PIND;                                              
+static inline void encoder_interrupts() {
+  uint8_t p = PIND;
   uint8_t s = (((p >> ENC_A) & 1) << 1) | ((p >> ENC_B) & 1);    // (A<<1)|B
-  encCount += PRECALC[(encState << 2) | s];
+  encoder_count += PRECALC[(encState << 2) | s];
   encState  = s;
 }
-ISR(INT0_vect) { encUpdate(); }   // D2(A)
-ISR(INT1_vect) { encUpdate(); }   // D3(B)
+ISR(INT0_vect) { encoder_interrupts(); }   // D2(A)
+ISR(INT1_vect) { encoder_interrupts(); }   // D3(B)
 
-long readEncCount() {
+long read_encoder_count() {
   noInterrupts();
-  long c = encCount;
+  long c = encoder_count;
   interrupts();
   return c * ENCODER_DIRECTION;
 }
@@ -95,8 +92,8 @@ void setup() {
   driveMotor(0);
 
   //엔코더 입력 + 내부 풀업
-  DDRD  &= ~((1 << ENC_A) | (1 << ENC_B));    
-  PORTD |=  ((1 << ENC_A) | (1 << ENC_B));    
+  DDRD  &= ~((1 << ENC_A) | (1 << ENC_B));
+  PORTD |=  ((1 << ENC_A) | (1 << ENC_B));
   //인터럽트 INT0/INT1 -> any change
   EICRA = (EICRA & ~0x0F) | (1 << ISC00) | (1 << ISC10);  // ISCx1:x0 = 01
   EIFR  = (1 << INTF0) | (1 << INTF1);        // 대기중 플래그 클리어
@@ -107,7 +104,7 @@ void setup() {
   tiltStepper.setMaxSpeed(TILT_MAX_SPEED_SPS);
   tiltStepper.setAcceleration(TILT_ACCEL_SPS2);
   tiltStepper.setCurrentPosition(0);
-  tiltStepper.disableOutputs();               
+  tiltStepper.disableOutputs();
 
   delay(100);
   while (tfSerial.available()) tfSerial.read();
@@ -121,22 +118,13 @@ void loop() {
   handlePcCommands();
 
   bool gotFrame = readTfmini();                 // 항상 파싱 (프레임 누락 최소화)
-
-  if (rawStream) {                              // 디버그: 모터/PID/tilt 안 돌리고 모든 유효 프레임 출력
-    if (gotFrame && tfValid) streamSample();
-    return;
-  }
-
   if (scanning) {
     if (!streamArmed) {                         // PID 등속 정착 전 SKIP_REVS 회전은 버림
-      long c = readEncCount(); if (c < 0) c = -c;
+      long c = read_encoder_count(); if (c < 0) c = -c;
       if (c >= (long)(SKIP_REVS * COUNTS_PER_TABLE_REV)) {
         streamArmed = true;
         Serial.println(F("# ARMED"));           // 정착 완료, 이제부터 스트리밍
       }
-    }
-    if (gotFrame && tfValid && streamArmed) {
-      streamSample();                           // 프레임 도착 즉시 pan/tilt 캡처
     }
     updateVelPid();                             // 턴테이블 속도 PID (~200Hz)
     updateTilt();                               // tilt (pan 종속, AccelStepper.run)
@@ -160,11 +148,11 @@ void driveMotor(int pwm) {
 void updateVelPid() {
   unsigned long now = micros();
   float dt = (now - pidPrevUs) * 1e-6f;
-  if (dt < 0.005f) return;                      
+  if (dt < 0.005f) return;
   pidPrevUs = now;
 
-  long  c   = readEncCount();
-  float vel = (float)(c - pidPrevCount) / dt;   
+  long  c   = read_encoder_count();
+  float vel = (float)(c - pidPrevCount) / dt;
   pidPrevCount = c;
 
   float err = TARGET_CPS - vel;
@@ -186,23 +174,23 @@ void updateTilt() {
   unsigned long now = micros();
   if (now - lastUs >= 3000) {
     lastUs = now;
-    float panRevs = (float)readEncCount() / COUNTS_PER_TABLE_REV;  
-    float phase   = panRevs * TILT_CYCLES_PER_REV;                 
-    phase -= floorf(phase);                                        
-    if (phase < 0.0f) phase += 1.0f;                               
+    float panRevs = (float)read_encoder_count() / COUNTS_PER_TABLE_REV;
+    float phase   = panRevs * TILT_CYCLES_PER_REV;
+    phase -= floorf(phase);
+    if (phase < 0.0f) phase += 1.0f;
     float frac;
     if (phase < 0.5f) {
-      frac = phase * 2.0f;          
+      frac = phase * 2.0f;
     } else {
-      frac = (1.0f - phase) * 2.0f; 
+      frac = (1.0f - phase) * 2.0f;
     }
     long target = (long)(TILT_MAX_STEPS * frac) * TILT_DIRECTION;
-    tiltStepper.moveTo(target);                                    
+    tiltStepper.moveTo(target);
   }
-  tiltStepper.run();                           
+  tiltStepper.run();
 }
 
-// ──────────────────── TFmini 9-byte 프레임 파싱 ────────────
+//TFmini 9-byte 프레임 파싱
 bool readTfmini() {
   static uint8_t buf[9];
   static uint8_t idx = 0;
@@ -221,7 +209,6 @@ bool readTfmini() {
         if ((sum & 0xFF) == buf[8]) {           // checksum 통과
           long d = (uint16_t)(buf[2] | (buf[3] << 8));   // 부호없이 0..65535
           long s = (uint16_t)(buf[4] | (buf[5] << 8));
-          // 유효성 게이트: 약신호/blind zone/에러코드(65535/65534/65532) 프레임 폐기
           if (s >= TF_STRENGTH_MIN && d >= TF_DIST_MIN_CM && d <= TF_DIST_MAX_CM) {
             tfDistanceCm = d;
             tfStrength   = s;
@@ -236,27 +223,13 @@ bool readTfmini() {
   return got;
 }
 
-// ──── 한 샘플 출력 : tilt_deg, enc_count(raw), dist, strength ────
-//  pan 각도는 Python(GUI)에서 'enc_count × 360 / 한바퀴카운트' 로 계산.
-//  → 한 바퀴 카운트를 UI 에서 실시간으로 바꿔 누적오차(precession) 보정 가능.
-void streamSample() {
-  long  c       = readEncCount();                                // 누적 엔코더 카운트(부호有)
-  long  tiltStp = tiltStepper.currentPosition() * TILT_DIRECTION; // 논리 step (0..512)
-  float tiltDeg = tiltStp * TILT_DEG_PER_STEP;
-
-  Serial.print(tiltDeg, 2);    Serial.print(',');
-  Serial.print(c);             Serial.print(',');   // raw 카운트 (Python 에서 각도 변환)
-  Serial.print(tfDistanceCm);  Serial.print(',');
-  Serial.println(tfStrength);
-}
-
 // ───────────────────────── PC 명령 처리 ────────────────────
 void handlePcCommands() {
   while (Serial.available()) {
     char ch = Serial.read();
     switch (ch) {
       case 's': case 'S': {                     // 시작: 현재 자세를 pan0°/tilt0° 로 가정
-        noInterrupts(); encCount = 0; interrupts();
+        noInterrupts(); encoder_count = 0; interrupts();
         encState = (((PIND >> ENC_A) & 1) << 1) | ((PIND >> ENC_B) & 1);
         tiltStepper.enableOutputs();
         tiltStepper.setCurrentPosition(0);
@@ -274,20 +247,15 @@ void handlePcCommands() {
         tiltStepper.disableOutputs();
         Serial.println(F("# SCAN_HALT"));
       } break;
-      case 'r': case 'R': {                     // 디버그 raw 스트림 토글 (모터 OFF, skip 무시)
-        rawStream = !rawStream;
-        if (rawStream) { scanning = false; driveMotor(0); }   // 정지 측정용
-        Serial.print(F("# RAW ")); Serial.println(rawStream ? 1 : 0);
-      } break;
       case 'z': case 'Z': {                     // 현재 위치를 0 으로
-        noInterrupts(); encCount = 0; interrupts();
+        noInterrupts(); encoder_count = 0; interrupts();
         encState = (((PIND >> ENC_A) & 1) << 1) | ((PIND >> ENC_B) & 1);
         tiltStepper.setCurrentPosition(0);
         tiltAtTop = false;
         Serial.println(F("# ZEROED"));
       } break;
       case 'p': case 'P': {                     // 상태 출력
-        long c = readEncCount();
+        long c = read_encoder_count();
         Serial.print(F("# STATUS enc="));   Serial.print(c);
         Serial.print(F(" pan_deg="));        Serial.print(c * DEG_PER_COUNT, 1);
         Serial.print(F(" tilt_step="));      Serial.print(tiltStepper.currentPosition());
